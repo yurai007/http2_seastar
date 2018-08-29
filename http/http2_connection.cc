@@ -400,8 +400,7 @@ int http2_connection<session_type>::consume_frame(nghttp2_internal_data && data)
     if (debug_on) {
         fmt::print("state={}\n", static_cast<int>(state));
     }
-    switch (state) {
-    case ops::on_frame_send: {
+    if constexpr (state == ops::on_frame_send) {
         auto frame = std::get<const nghttp2_frame*>(data);
         auto type = static_cast<nghttp2_frame_type>(frame->hd.type);
         dump_frame(type, "<----------------------------");
@@ -431,9 +430,7 @@ int http2_connection<session_type>::consume_frame(nghttp2_internal_data && data)
                 return process_send();
             });
         }
-        break;
-    }
-    case ops::on_begin_headers: {
+    } else if constexpr (state == ops::on_begin_headers) {
         auto frame = std::get<const nghttp2_frame*>(data);
         if (frame->hd.type != NGHTTP2_HEADERS || frame->headers.cat != NGHTTP2_HCAT_REQUEST) {
             return 0;
@@ -441,9 +438,7 @@ int http2_connection<session_type>::consume_frame(nghttp2_internal_data && data)
 
         create_stream(frame->hd.stream_id);
         dump_frame(static_cast<nghttp2_frame_type>(frame->hd.type));
-        break;
-    }
-    case ops::on_header: {
+    } else if constexpr (state == ops::on_header) {
         // request creation
         auto [frame, feed] = std::get<std::tuple<const nghttp2_frame*, request_feed>>(data);
         if (frame->hd.type != NGHTTP2_HEADERS || frame->headers.cat != NGHTTP2_HCAT_REQUEST) {
@@ -453,16 +448,12 @@ int http2_connection<session_type>::consume_frame(nghttp2_internal_data && data)
         if (!stream)
             return 0;
         stream->update_request(feed);
-        break;
-    }
-    case ops::on_data_chunk_recv: {
+    } else if constexpr (state == ops::on_data_chunk_recv) {
         if constexpr (session_type == session_t::client) {
             eat_server_rep(std::get<data_chunk_feed>(data));
         }
         return 0;
-        break;
-    }
-    case ops::on_frame_recv: {
+    } else if constexpr (state == ops::on_frame_recv) {
         // handling request + commiting response
         auto frame = std::get<const nghttp2_frame*>(data);
         auto stream = find_stream(frame->hd.stream_id);
@@ -513,12 +504,8 @@ int http2_connection<session_type>::consume_frame(nghttp2_internal_data && data)
         default:
             break;
         }
-        break;
-    }
-    case ops::on_frame_not_send: {
-        break;
-    }
-    case ops::on_stream_close: {
+    } else if constexpr (state == ops::on_frame_not_send) {
+    } else if constexpr (state == ops::on_stream_close) {
         auto stream_id = std::get<int32_t>(data);
         auto stream = find_stream(stream_id);
         if (!stream)
@@ -538,9 +525,7 @@ int http2_connection<session_type>::consume_frame(nghttp2_internal_data && data)
                 }
             }
         }
-        break;
-    }
-    default:
+    } else {
         return error();
     }
     return 0;
