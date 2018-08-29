@@ -124,6 +124,15 @@ private:
 };
 
 enum class session_t {client, server};
+enum class ops {
+    on_begin_headers,
+    on_frame_recv,
+    on_header,
+    on_data_chunk_recv,
+    on_stream_close,
+    on_frame_send,
+    on_frame_not_send
+};
 
 namespace legacy = seastar::httpd;
 
@@ -135,9 +144,7 @@ public:
     future<> process() override;
     void shutdown() override;
     output_stream<char>& out() override;
-
     ~http2_connection();
-    void init();
     future<> process_internal(bool start_with_reading = true);
     int resume(const http2_stream &stream);
     int submit_response(http2_stream &stream);
@@ -160,25 +167,15 @@ private:
     std::vector<lw_shared_ptr<request>> _remaining_reqs;
     bool _start_with_reading;
 
-    enum class ops
-    {
-        on_begin_headers,
-        on_frame_recv,
-        on_header,
-        on_data_chunk_recv,
-        on_stream_close,
-        on_frame_send,
-        on_frame_not_send
-    };
-
-    future<> send_tx();
+    future<> process_send();
     int submit_request_nghttp2(lw_shared_ptr<request> _request);
     future<> internal_process();
     void dump_frame(nghttp2_frame_type frame_type, const char *direction = "---------------------------->");
     void receive_nghttp2(const uint8_t *data, size_t len);
     int send_nghttp2(const uint8_t **data);
     int handle_remaining_reqs();
-    int consume_frame(nghttp2_internal_data &&data, ops state);
+    template<ops state>
+    int consume_frame(nghttp2_internal_data &&data);
     void create_stream(const int32_t stream_id);
     void close_stream(const int32_t stream_id);
     http2_stream *find_stream(const int32_t stream_id);

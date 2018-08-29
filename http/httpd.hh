@@ -300,7 +300,6 @@ public:
                 conn = new connection(*this, std::move(socket_), std::move(address_));
             } else {
                 conn = new seastar::httpd2::http2_connection<>(&_routes_http2, std::move(socket_), std::move(address_));
-                dynamic_cast<seastar::httpd2::http2_connection<>*>(conn)->init();
             }
             conn->process().then_wrapped([conn] (auto&& f) {
                 delete conn;

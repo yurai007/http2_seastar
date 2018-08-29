@@ -84,8 +84,6 @@ public:
         _common_reqs->done();
         for (auto &&socket : _sockets) {
             auto conn = new http2_connection<session_t::client>(&_routes, std::move(socket), std::move(make_ipv4_address(server_addr)));
-            conn->init();
-
             send_burst(reqs, _common_reqs, conn)
                     .then_wrapped([this, conn] (auto&& f) {
                         _conn_finished.signal();

@@ -94,21 +94,8 @@ http2_connection<session_type>::http2_connection(routes *routes_, connected_sock
     if (debug_on) {
         fmt::print("new session: {}\n", addr);
     }
-}
-
-template<session_t session_type>
-void http2_connection<session_type>::eat_server_rep(data_chunk_feed data) {
-    const auto *ptr = reinterpret_cast<const char*>(std::get<0>(data));
-    const sstring response(ptr, std::get<1>(data));
-    assert(_routes && _routes->_client_handler);
-    _routes->_client_handler(response);
-}
-
-template<session_t session_type>
-void http2_connection<session_type>::init() {
     nghttp2_session_callbacks *callbacks;
     static auto get_impl = [](void *ptr) { return reinterpret_cast<http2_connection*>(ptr); };
-    // TO DO: whole init stuff only once
     int rv = nghttp2_session_callbacks_new(&callbacks);
     if (rv != 0) {
         throw nghttp2_exception();
@@ -116,22 +103,26 @@ void http2_connection<session_type>::init() {
     if constexpr (session_type == session_t::client) {
         nghttp2_session_callbacks_set_on_frame_send_callback(callbacks,
             [](nghttp2_session *, const nghttp2_frame *frame, void *user_data) {
-                return get_impl(user_data)->consume_frame(frame, ops::on_frame_send);
-        });
+                http2_connection* con = get_impl(user_data);
+                return con->consume_frame<ops::on_frame_send>(frame);
+            });
 
         nghttp2_session_callbacks_set_on_frame_recv_callback(callbacks,
             [](nghttp2_session*, const nghttp2_frame *frame, void *user_data) {
-                return get_impl(user_data)->consume_frame(frame, ops::on_frame_recv);
+                http2_connection* con = get_impl(user_data);
+                return con->consume_frame<ops::on_frame_recv>(frame);
             });
 
         nghttp2_session_callbacks_set_on_stream_close_callback(callbacks,
             [](nghttp2_session*, int32_t stream_id, uint32_t, void *user_data) {
-                return get_impl(user_data)->consume_frame(stream_id, ops::on_stream_close);
+                http2_connection* con = get_impl(user_data);
+                return con->consume_frame<ops::on_stream_close>(stream_id);
             });
 
         nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks,
             [](nghttp2_session*, uint8_t, int32_t, const uint8_t *data, size_t len, void *user_data) {
-                return get_impl(user_data)->consume_frame(std::make_tuple(data, len), ops::on_data_chunk_recv);
+                http2_connection* con = get_impl(user_data);
+                return con->consume_frame<ops::on_data_chunk_recv>(std::make_tuple(data, len));
             });
 
         rv = nghttp2_session_client_new(&_session, callbacks, this);
@@ -144,42 +135,51 @@ void http2_connection<session_type>::init() {
             throw nghttp2_exception();
         }
     } else {
+
         nghttp2_session_callbacks_set_on_begin_headers_callback(callbacks,
             [](nghttp2_session*, const nghttp2_frame *frame, void *user_data) {
-                return get_impl(user_data)->consume_frame(frame, ops::on_begin_headers);
+                http2_connection* con = get_impl(user_data);
+                return con->consume_frame<ops::on_begin_headers>(frame);
             });
 
         nghttp2_session_callbacks_set_on_header_callback(callbacks,
             [](nghttp2_session*, const nghttp2_frame *frame, const uint8_t *name, size_t namelen,
                             const uint8_t *value, size_t valuelen, uint8_t, void *user_data) {
-                return get_impl(user_data)->consume_frame(std::make_tuple(frame,
-                                    std::make_tuple(name, namelen, value, valuelen)), ops::on_header);
+                http2_connection* con = get_impl(user_data);
+                return con->consume_frame<ops::on_header>(std::make_tuple(frame,
+                                    std::make_tuple(name, namelen, value, valuelen)));
             });
 
         nghttp2_session_callbacks_set_on_frame_recv_callback(callbacks,
             [](nghttp2_session*, const nghttp2_frame *frame, void *user_data) {
-                return get_impl(user_data)->consume_frame(frame, ops::on_frame_recv);
+                http2_connection* con = get_impl(user_data);
+                return con->consume_frame<ops::on_frame_recv>(frame);
             });
 
         nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks,
             [](nghttp2_session*, uint8_t, int32_t, const uint8_t*, size_t, void *user_data) {
-                return get_impl(user_data)->consume_frame({}, ops::on_data_chunk_recv);
+                http2_connection* con = get_impl(user_data);
+                return con->consume_frame<ops::on_data_chunk_recv>({});
             });
 
         nghttp2_session_callbacks_set_on_stream_close_callback(callbacks,
             [](nghttp2_session*, int32_t stream_id, uint32_t, void *user_data) {
-                return get_impl(user_data)->consume_frame(stream_id, ops::on_stream_close);
-        });
+                http2_connection* con = get_impl(user_data);
+                return con->consume_frame<ops::on_stream_close>(stream_id);
+            });
 
         nghttp2_session_callbacks_set_on_frame_send_callback(callbacks,
             [](nghttp2_session *, const nghttp2_frame *frame, void *user_data) {
-                return get_impl(user_data)->consume_frame(frame, ops::on_frame_send);
+                http2_connection* con = get_impl(user_data);
+                return con->consume_frame<ops::on_frame_send>(frame);
             });
 
         nghttp2_session_callbacks_set_on_frame_not_send_callback(callbacks,
             [](nghttp2_session *, const nghttp2_frame *, int, void *user_data) {
-                return get_impl(user_data)->consume_frame({}, ops::on_frame_not_send);
+                http2_connection* con = get_impl(user_data);
+                return con->consume_frame<ops::on_frame_not_send>({});
             });
+
         rv = nghttp2_session_server_new(&_session, callbacks, this);
         nghttp2_session_callbacks_del(callbacks);
         if (rv != 0 || !_session) {
@@ -191,6 +191,14 @@ void http2_connection<session_type>::init() {
             throw nghttp2_exception();
         }
     }
+}
+
+template<session_t session_type>
+void http2_connection<session_type>::eat_server_rep(data_chunk_feed data) {
+    const auto *ptr = reinterpret_cast<const char*>(std::get<0>(data));
+    const sstring response(ptr, std::get<1>(data));
+    assert(_routes && _routes->_client_handler);
+    _routes->_client_handler(response);
 }
 
 void dump_buffer(temporary_buffer<char> buffer, const char *direction) {
@@ -256,7 +264,7 @@ future<> http2_connection<session_type>::process_internal(bool start_with_readin
             } else
                _start_with_reading = true;
 
-            return send_tx();
+            return process_send();
         });
     }).then_wrapped([this] (future<> f) {
         return _write_buf.close();
@@ -271,7 +279,7 @@ future<> http2_connection<session_type>::process() {
 }
 
 template<session_t session_type>
-future<> http2_connection<session_type>::send_tx() {
+future<> http2_connection<session_type>::process_send() {
     auto end = make_lw_shared<bool>(false);
     return do_until([this, end] {return *end;}, [this, end] {
         const uint8_t *data = nullptr;
@@ -387,7 +395,8 @@ static int error() {
 }
 
 template<session_t session_type>
-int http2_connection<session_type>::consume_frame(nghttp2_internal_data && data, ops state) {
+template<ops state>
+int http2_connection<session_type>::consume_frame(nghttp2_internal_data && data) {
     if (debug_on) {
         fmt::print("state={}\n", static_cast<int>(state));
     }
@@ -419,7 +428,7 @@ int http2_connection<session_type>::consume_frame(nghttp2_internal_data && data,
                 if (rc != 0) {
                     assert(false);
                 }
-                return send_tx();
+                return process_send();
             });
         }
         break;
@@ -497,7 +506,7 @@ int http2_connection<session_type>::consume_frame(nghttp2_internal_data && data,
                 }
                 if (!resume(*stream))
                     assert(false);
-                return send_tx();
+                return process_send();
             });
             break;
         }
