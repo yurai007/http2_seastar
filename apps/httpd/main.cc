@@ -49,6 +49,9 @@ public:
 
 void set_routes(routes& r, h2::routes &rhttp2) {
     function_handler* h1 = new function_handler([](const_req req) {
+         if (debug_handlers) {
+             fmt::print("HTTP/1.1 method: {}\npath: {}\n", req._method, req._url);
+         }
         return "hello";
     });
     function_handler* h2 = new function_handler([](std::unique_ptr<request> req) {
@@ -130,6 +133,7 @@ future<> server(bpo::variables_map config) {
     }).then([server, port, with_tls] {
         return server->listen(port, with_tls);
     }).then([server, port] {
+        fmt::print("Seastar HTTP/1.1 legacy server listening on port 10000 ...\n");
         fmt::print("Seastar HTTP/2 server listening on port {} ...\n", port);
         engine().at_exit([server] {
             return server->stop();

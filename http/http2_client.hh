@@ -50,7 +50,7 @@ public:
             }
             return _conn_connected.wait(connections);
         } else {
-            constexpr auto hardcoded_pem = "/home/yurai/seastar/seastar/tests/catest.pem";
+            constexpr auto hardcoded_pem = "/home/yurai/seastar/scylla/seastar/tests/catest.pem";
             auto builder = make_lw_shared<tls::credentials_builder>();
             return builder->set_x509_trust_file(hardcoded_pem, tls::x509_crt_format::PEM)
                         .then([this, connections, builder, server_addr = std::move(server_addr)]() {

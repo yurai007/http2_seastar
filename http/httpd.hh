@@ -250,8 +250,8 @@ public:
     }
     future<> listen(ipv4_addr addr, bool with_tls) {
         if (with_tls) {
-            constexpr auto hardcoded_crt = "/home/yurai/seastar/seastar/tests/test.crt";
-            constexpr auto hardcoded_key = "/home/yurai/seastar/seastar/tests/test.key";
+            constexpr auto hardcoded_crt = "/home/yurai/seastar/scylla/seastar/tests/test.crt";
+            constexpr auto hardcoded_key = "/home/yurai/seastar/scylla/seastar/tests/test.key";
             auto certs = make_shared<tls::server_credentials>(make_shared<tls::dh_params>());
             return certs->set_x509_key_file(hardcoded_crt, hardcoded_key, tls::x509_crt_format::PEM)
                     .then([this, certs, addr = std::move(addr)](){
@@ -263,8 +263,11 @@ public:
         } else {
             listen_options lo;
             lo.reuse_address = true;
+            ipv4_addr legacy_addr = {"127.0.0.1", 10000u};
+            _listeners.push_back(engine().listen(make_ipv4_address(legacy_addr), lo));
             _listeners.push_back(engine().listen(make_ipv4_address(addr), lo));
-            _stopped = when_all(std::move(_stopped), do_accepts(_listeners.size() - 1)).discard_result();
+            _stopped = when_all(std::move(_stopped), do_accepts(0), do_accepts(1)).discard_result();
+            // _stopped = when_all(std::move(_stopped), do_accepts(_listeners.size() - 1)).discard_result();
             return make_ready_future<>();
         }
     }
@@ -292,7 +295,8 @@ public:
             }
             auto [socket_, address_] = f_cs_sa.get();
             session *conn;
-            if (false) {
+            assert(which == 0 || which == 1);
+            if (which == 0) {
                 conn = new connection(*this, std::move(socket_), std::move(address_));
             } else {
                 conn = new seastar::httpd2::http2_connection<>(&_routes_http2, std::move(socket_), std::move(address_));

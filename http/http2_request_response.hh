@@ -35,7 +35,7 @@
 namespace seastar {
 namespace httpd2 {
 
-constexpr inline auto debug_on = true;
+constexpr inline auto debug_on = false;
 
 class nghttp2_exception final : public std::exception {
 public:
