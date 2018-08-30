@@ -125,6 +125,11 @@ http2_connection<session_type>::http2_connection(routes *routes_, connected_sock
                 return con->consume_frame<ops::on_data_chunk_recv>(std::make_tuple(data, len));
             });
 
+        nghttp2_session_callbacks_set_error_callback2(callbacks,
+            [](nghttp2_session *, int lib_error_code, const char *msg, size_t, void *){
+                fmt::print("error: {} {}\n", lib_error_code, msg);
+                return static_cast<int>(NGHTTP2_ERR_CALLBACK_FAILURE);
+            });
         rv = nghttp2_session_client_new(&_session, callbacks, this);
         nghttp2_session_callbacks_del(callbacks);
         if (rv != 0 || !_session) {
@@ -180,6 +185,11 @@ http2_connection<session_type>::http2_connection(routes *routes_, connected_sock
                 return con->consume_frame<ops::on_frame_not_send>({});
             });
 
+        nghttp2_session_callbacks_set_error_callback2(callbacks,
+            [](nghttp2_session *, int lib_error_code, const char *msg, size_t, void *){
+                fmt::print("error: {} {}\n", lib_error_code, msg);
+                return static_cast<int>(NGHTTP2_ERR_CALLBACK_FAILURE);
+            });
         rv = nghttp2_session_server_new(&_session, callbacks, this);
         nghttp2_session_callbacks_del(callbacks);
         if (rv != 0 || !_session) {
