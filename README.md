@@ -19,7 +19,7 @@ Compilers:
 ./build/release/apps/httpd/httpd --node=server --debug=true --port=3000  
 curl --http2-prior-knowledge -G 127.0.0.1:3000  
 
-Dumps:
+**Dumps:**
 
 ./build/release/apps/httpd/httpd --node=server --debug=true --port=3000  
 Seastar HTTP/1.1 legacy server listening on port 10000 ...  
@@ -73,7 +73,7 @@ state=1
 
 ### Performance tests executed only per one shard on one machine and comparision with old implementation 
 
-HTTP/2 server
+**HTTP/2 server**
 
 ./build/release/apps/httpd/httpd --node=server --tls=false --debug=false --port=3000 -c 1  
 ./build/release/apps/httpd/httpd --node=client --tls=false --con=500 --req=4000 -c 1  
@@ -83,7 +83,7 @@ Total responses: 2000000
 Req/s: **224330**  
 Avg resp time: 4.45772 us  
 
-Legacy HTTP/1.1 server  
+**Legacy HTTP/1.1 server**  
 
 ./build/release/apps/httpd/httpd --node=server --tls=false --debug=false --port=3000 -c 1  
 ./build/release/apps/seawreck/seawreck --smp 1 --server 127.0.0.1:3000  
