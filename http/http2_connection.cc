@@ -91,6 +91,10 @@ response &http2_stream::get_response() {
 template<session_t session_type>
 http2_connection<session_type>::http2_connection(routes *routes_, connected_socket&& fd, socket_address addr)
     : _fd(std::move(fd)), _read_buf(_fd.input()), _write_buf(_fd.output()), _routes(routes_) {
+    assert(_routes);
+    if constexpr (session_type == session_t::client) {
+        assert(_routes->_client_handler);
+    }
     if (debug_on) {
         fmt::print("new session: {}\n", addr);
     }
@@ -98,7 +102,7 @@ http2_connection<session_type>::http2_connection(routes *routes_, connected_sock
     static auto get_impl = [](void *ptr) { return reinterpret_cast<http2_connection*>(ptr); };
     int rv = nghttp2_session_callbacks_new(&callbacks);
     if (rv != 0) {
-        throw nghttp2_exception();
+        throw nghttp2_exception("nghttp2_session_callbacks_new", rv);
     }
     if constexpr (session_type == session_t::client) {
         nghttp2_session_callbacks_set_on_frame_send_callback(callbacks,
@@ -133,14 +137,13 @@ http2_connection<session_type>::http2_connection(routes *routes_, connected_sock
         rv = nghttp2_session_client_new(&_session, callbacks, this);
         nghttp2_session_callbacks_del(callbacks);
         if (rv != 0 || !_session) {
-            throw nghttp2_exception();
+            throw nghttp2_exception("nghttp2_session_client_new", rv);
         }
         rv = nghttp2_submit_settings(_session, NGHTTP2_FLAG_NONE, nullptr, 0);
         if (rv != 0) {
-            throw nghttp2_exception();
+            throw nghttp2_exception("nghttp2_submit_settings", rv);
         }
     } else {
-
         nghttp2_session_callbacks_set_on_begin_headers_callback(callbacks,
             [](nghttp2_session*, const nghttp2_frame *frame, void *user_data) {
                 http2_connection* con = get_impl(user_data);
@@ -193,12 +196,12 @@ http2_connection<session_type>::http2_connection(routes *routes_, connected_sock
         rv = nghttp2_session_server_new(&_session, callbacks, this);
         nghttp2_session_callbacks_del(callbacks);
         if (rv != 0 || !_session) {
-            throw nghttp2_exception();
+            throw nghttp2_exception("nghttp2_session_server_new", rv);
         }
         nghttp2_settings_entry entry{NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, _streams_limit};
         rv = nghttp2_submit_settings(_session, NGHTTP2_FLAG_NONE, &entry, 1);
         if (rv != 0) {
-            throw nghttp2_exception();
+            throw nghttp2_exception("nghttp2_submit_settings", rv);
         }
     }
 }
@@ -207,7 +210,6 @@ template<session_t session_type>
 void http2_connection<session_type>::eat_server_rep(data_chunk_feed data) {
     const auto *ptr = reinterpret_cast<const char*>(std::get<0>(data));
     const sstring response(ptr, std::get<1>(data));
-    assert(_routes && _routes->_client_handler);
     _routes->_client_handler(response);
 }
 
@@ -277,6 +279,11 @@ future<> http2_connection<session_type>::process_internal(bool start_with_readin
             return process_send();
         });
     }).then_wrapped([this] (future<> f) {
+        try {
+            f.get();
+        } catch (std::exception& ex) {
+            std::cerr << "process_internal failed: " << ex.what() << std::endl;
+        }
         return _write_buf.close();
     }).finally([this] {
         return _read_buf.close();
@@ -347,6 +354,11 @@ int http2_connection<session_type>::submit_request_nghttp2(lw_shared_ptr<request
 }
 
 template<session_t session_type>
+void http2_connection<session_type>::reset_stream(int32_t stream_id, uint32_t error_code) {
+    nghttp2_submit_rst_stream(_session, NGHTTP2_FLAG_NONE, stream_id, error_code);
+}
+
+template<session_t session_type>
 int http2_connection<session_type>::submit_request(lw_shared_ptr<request> request_) {
     if (pending_streams() < _streams_limit) {
         auto stream_id = submit_request_nghttp2(request_);
@@ -384,9 +396,9 @@ void http2_connection<session_type>::dump_frame(nghttp2_frame_type frame_type, c
 
 template<session_t session_type>
 void http2_connection<session_type>::receive_nghttp2(const uint8_t *data, size_t len) {
-    int rv = nghttp2_session_mem_recv(_session, data, len);
+    auto rv = nghttp2_session_mem_recv(_session, data, len);
     if (rv < 0) {
-        assert(false);
+        throw nghttp2_exception("nghttp2_session_mem_recv", rv);
     }
 }
 
@@ -394,8 +406,7 @@ template<session_t session_type>
 int http2_connection<session_type>::send_nghttp2(const uint8_t **data) {
     auto rv = nghttp2_session_mem_send(_session, data);
     if (rv < 0) {
-        assert(false);
-        return -1;
+        throw nghttp2_exception("nghttp2_session_mem_send", rv);
     }
     return rv;
 }
@@ -435,7 +446,7 @@ int http2_connection<session_type>::consume_frame(nghttp2_internal_data && data)
                 promised_stream->commit_response();
                 auto rc = submit_response(*promised_stream);
                 if (rc != 0) {
-                    assert(false);
+                    reset_stream(promised_stream->get_id(), NGHTTP2_INTERNAL_ERROR);
                 }
                 return process_send();
             });
@@ -493,7 +504,7 @@ int http2_connection<session_type>::consume_frame(nghttp2_internal_data && data)
                     stream->commit_response(true);
                     auto id = submit_push_promise(*stream);
                     if (id < 0) {
-                        assert(false);
+                        throw nghttp2_exception("submit_push_promise", id);
                     }
                     stream->move_push_rep();
                     create_stream(id);
@@ -503,10 +514,11 @@ int http2_connection<session_type>::consume_frame(nghttp2_internal_data && data)
                 stream->commit_response();
                 auto rc = submit_response(*stream);
                 if (rc != 0) {
-                    assert(false);
+                    reset_stream(stream->get_id(), NGHTTP2_INTERNAL_ERROR);
                 }
-                if (!resume(*stream))
-                    assert(false);
+                rc = resume(*stream);
+                if (!rc)
+                    throw nghttp2_exception("resume", rc);
                 return process_send();
             });
             break;
@@ -578,7 +590,6 @@ user_callback routes::handle_push() {
 }
 
 routes& routes::add(const method type, const sstring &path, user_callback handler) {
-    assert(type == method::GET);
     _path_to_handler[path] = handler;
     return *this;
 }

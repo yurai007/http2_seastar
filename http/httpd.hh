@@ -299,16 +299,24 @@ public:
             if (which == 0) {
                 conn = new connection(*this, std::move(socket_), std::move(address_));
             } else {
-                conn = new seastar::httpd2::http2_connection<>(&_routes_http2, std::move(socket_), std::move(address_));
-            }
-            conn->process().then_wrapped([conn] (auto&& f) {
-                delete conn;
                 try {
-                    f.get();
-                } catch (std::exception& ex) {
-                    std::cerr << "request error " << ex.what() << std::endl;
+                    conn = new seastar::httpd2::http2_connection<>(&_routes_http2, std::move(socket_), std::move(address_));
+                } catch (std::exception &ex) {
+                    std::cerr << "http2 connection error " << ex.what() << std::endl;
+                    delete conn;
+                    conn = nullptr;
                 }
-            });
+            }
+            if (conn) {
+                conn->process().then_wrapped([conn] (auto&& f) {
+                    delete conn;
+                    try {
+                        f.get();
+                    } catch (std::exception& ex) {
+                        std::cerr << "request error " << ex.what() << std::endl;
+                    }
+                });
+            }
             do_accepts(which);
         }).then_wrapped([] (auto f) {
             try {

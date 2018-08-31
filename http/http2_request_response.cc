@@ -59,7 +59,7 @@ size_t response::flush_body(uint8_t *out_buffer, size_t, uint32_t *out_flags) {
     constexpr auto NGHTTP2_MAX_PAYLOADLEN = 16384L;
     auto remaining_part = (_body.c_str() + _body.size()) - _body_head;
     auto chunk_size = std::min(remaining_part, NGHTTP2_MAX_PAYLOADLEN);
-    if (debug_on) {
+    if (debug_on_file) {
         fmt::print("remaining body: {} chunk size: {}\n", remaining_part, chunk_size);
     }
     std::copy_n(_body_head, chunk_size, out_buffer);

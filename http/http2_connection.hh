@@ -169,6 +169,7 @@ private:
 
     future<> process_send();
     int submit_request_nghttp2(lw_shared_ptr<request> _request);
+    void reset_stream(int32_t stream_id, uint32_t error_code);
     future<> internal_process();
     void dump_frame(nghttp2_frame_type frame_type, const char *direction = "---------------------------->");
     void receive_nghttp2(const uint8_t *data, size_t len);

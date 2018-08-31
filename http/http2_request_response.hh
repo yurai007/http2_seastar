@@ -36,12 +36,19 @@ namespace seastar {
 namespace httpd2 {
 
 constexpr inline auto debug_on = false;
+constexpr inline auto debug_on_file = true;
 
 class nghttp2_exception final : public std::exception {
 public:
-    const char* what() const noexcept override {
-        return "nghttp2_exception";
+    nghttp2_exception(const char *msg, int err)
+        : _msg(msg) {
+        _msg += sstring(": ") + nghttp2_strerror(err);
     }
+    const char* what() const noexcept override {
+        return _msg.c_str();
+    }
+private:
+    sstring _msg;
 };
 
 enum class method

@@ -71,7 +71,8 @@ public:
         for (auto i = requests; i > 0; i--) {
             auto rv = conn->submit_request(req);
             if (rv < 0) {
-                assert(false);
+                _failed_requests++;
+                throw nghttp2_exception("submit_request", rv);
             }
         }
         return conn->process_internal(false);
@@ -102,7 +103,7 @@ public:
     future<> stop() { return make_ready_future(); }
     future<uint64_t> responses() { return make_ready_future<uint64_t>(_responses); }
     routes _routes;
-    uint64_t _responses{0};
+    uint64_t _responses{0}, _failed_requests {0};
 private:
     semaphore _conn_connected{0}, _conn_finished{0};
     std::vector<connected_socket> _sockets;
