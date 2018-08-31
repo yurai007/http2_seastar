@@ -33,7 +33,43 @@ handle /
 
 ### Example of file transfer (with debug output enabled)
 
-TODO
+curl --http2-prior-knowledge --output out_faces.png -G 127.0.0.1:3000/http2rulez.com/public/assets/images/faces.png  
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current  
+                                 Dload  Upload   Total   Spent    Left  Speed  
+100  387k  100  387k    0     0  3652k      0 --:--:-- --:--:-- --:--:-- 3652k  
+
+./build/debug/apps/httpd/httpd --node=server --debug=true --port=3000 -c 1  
+WARNING: debug mode. Not for benchmarking or production  
+WARN  2018-08-31 15:41:05,184 seastar - Seastar compiled with default allocator, heap profiler not supported  
+WARN  2018-08-31 15:41:05,206 [shard 0] seastar - Unable to set SCHED_FIFO scheduling policy for timer thread; latency impact possible. Try adding CAP_SYS_NICE  
+Seastar HTTP/1.1 legacy server listening on port 10000 ...  
+Seastar HTTP/2 server listening on port 3000 ...  
+opened /home/yurai/seastar/http2_reload/test_http2//http2rulez.com/public/assets/images/faces.png  
+remaining body: 396431 chunk size: 16384  
+remaining body: 380047 chunk size: 16384  
+remaining body: 363663 chunk size: 16384  
+remaining body: 347279 chunk size: 16384  
+remaining body: 330895 chunk size: 16384  
+remaining body: 314511 chunk size: 16384  
+remaining body: 298127 chunk size: 16384  
+remaining body: 281743 chunk size: 16384  
+remaining body: 265359 chunk size: 16384  
+remaining body: 248975 chunk size: 16384  
+remaining body: 232591 chunk size: 16384  
+remaining body: 216207 chunk size: 16384  
+remaining body: 199823 chunk size: 16384  
+remaining body: 183439 chunk size: 16384  
+remaining body: 167055 chunk size: 16384  
+remaining body: 150671 chunk size: 16384  
+remaining body: 134287 chunk size: 16384  
+remaining body: 117903 chunk size: 16384  
+remaining body: 101519 chunk size: 16384  
+remaining body: 85135 chunk size: 16384  
+remaining body: 68751 chunk size: 16384  
+remaining body: 52367 chunk size: 16384  
+remaining body: 35983 chunk size: 16384  
+remaining body: 19599 chunk size: 16384  
+remaining body: 3215 chunk size: 3215  
 
 ### Debug verbose output of frames exchange
 
