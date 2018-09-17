@@ -379,11 +379,64 @@ struct http_consumer {
     }
 };
 
+namespace h2 = seastar::httpd2;
+
+static auto dump_buffer(const sstring &buffer) {
+    std::cout <<  buffer.size() << " B:     ";
+    for (auto i = 0u; i < buffer.size(); i++)
+        std::cout << (unsigned char)(buffer[i]);
+    std::cout << "\n";
+}
+
+struct http2_utils {
+    static sstring prepare_http2_request(h2::request &req) {
+        nghttp2_session *session;
+        nghttp2_session_callbacks *callbacks;
+        auto rv = nghttp2_session_callbacks_new(&callbacks);
+        assert(rv == 0);
+        nghttp2_session_callbacks_set_on_frame_send_callback(callbacks, [](auto, auto, auto) { return 0; });
+        rv = nghttp2_session_client_new(&session, callbacks, nullptr);
+        nghttp2_session_callbacks_del(callbacks);
+        assert (rv == 0 && session);
+        rv = nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, nullptr, 0);
+        assert(rv == 0);
+        req.done();
+        auto stream_id = nghttp2_submit_request(session, nullptr, req.data(), req.size(), nullptr, nullptr);
+        assert(stream_id >= 0);
+        auto size = 0u;
+        sstring raw_frames;
+        for (;;) {
+            const uint8_t *data = nullptr;
+            auto bytes = nghttp2_session_mem_send(session, &data);
+            assert(bytes >= 0);
+            sstring raw_frame {reinterpret_cast<const char*>(data), static_cast<size_t>(bytes)};
+            if (bytes == 0) {
+                break;
+            } else {
+                dump_buffer(raw_frame);
+            }
+            size += bytes;
+            raw_frames += raw_frame;
+        }
+        assert(size == 81);
+        return raw_frames;
+    }
+};
+
 class test_client_server {
 public:
     static future<> write_request(output_stream<char>& output) {
         return output.write(sstring("GET /test HTTP/1.1\r\nHost: myhost.org\r\n\r\n")).then([&output]{
                 return output.flush();
+        });
+    }
+
+    static future<> write_http2_request(output_stream<char>& output) {
+        auto req = h2::request({{":method", "GET"}, {":path", "/test"}, {":scheme", "https"},
+                                             {":authority", "myhost.org"}, {"accept", "*/*"},
+                                             {"user-agent", "nghttp2/" NGHTTP2_VERSION} });
+        return output.write(http2_utils::prepare_http2_request(req)).then([&output]{
+            return output.flush();
         });
     }
 
@@ -450,13 +503,14 @@ public:
             });
         });
     }
-    static future<> run(std::vector<std::tuple<bool, size_t>> tests) {
+    static future<> run(std::vector<std::tuple<bool, size_t>> tests, bool http2 = false) {
         return do_with(loopback_connection_factory(), foreign_ptr<shared_ptr<http_server>>(make_shared<http_server>("test")),
-                [tests] (loopback_connection_factory& lcf, auto& server) {
-            return do_with(loopback_socket_impl(lcf), [&server, &lcf, tests](loopback_socket_impl& lsi) {
+                [tests, http2] (loopback_connection_factory& lcf, auto& server) {
+            return do_with(loopback_socket_impl(lcf), [&server, &lcf, tests, http2](loopback_socket_impl& lsi) {
+                httpd::http_server_tester::listeners(*server).emplace_back(lcf.get_server_socket());
                 httpd::http_server_tester::listeners(*server).emplace_back(lcf.get_server_socket());
 
-                auto client = seastar::async([&lsi, tests] {
+                auto client = seastar::async([&lsi, tests, http2] {
                     connected_socket c_socket = std::get<connected_socket>(lsi.connect(socket_address(ipv4_addr()), socket_address(ipv4_addr())).get());
                     input_stream<char> input(std::move(c_socket.input()));
                     output_stream<char> output(std::move(c_socket.output()));
@@ -464,7 +518,11 @@ public:
                     size_t count = 0;
                     while (more) {
                         http_consumer htp;
-                        write_request(output).get();
+                        if (!http2) {
+                            write_request(output).get();
+                        } else {
+                            write_http2_request(output).get();
+                        }
                         repeat([&c_socket, &input, &htp] {
                             return input.read().then([&c_socket, &input, &htp](const temporary_buffer<char>& b) mutable {
                                 return (b.size() == 0 || htp.read(b)) ? make_ready_future<stop_iteration>(stop_iteration::yes) :
@@ -487,7 +545,7 @@ public:
                     }
                 });
 
-                auto writer = seastar::async([&server, tests] {
+                auto writer = seastar::async([&server, tests, http2] {
                     class test_handler : public handler_base {
                         size_t count = 0;
                         http_server& _server;
@@ -509,9 +567,21 @@ public:
                             return _all_message_sent.get_future();
                         }
                     };
-                    auto handler = new test_handler(*server, tests);
-                    server->_routes.put(GET, "/test", handler);
-                    when_all(server->do_accepts(0), handler->wait_for_message()).get();
+                    if (!http2) {
+                        auto handler = new test_handler(*server, tests);
+                        server->_routes.put(GET, "/test", handler);
+                        when_all(server->do_accepts(0), handler->wait_for_message()).get();
+                    } else {
+                        promise<> *done = new promise<>();
+                        server->_routes_http2.add(h2::method::GET, "/test", [done](auto req, auto rep){
+                            fmt::print("method: {}\npath: {}\nscheme: {}\n", req->_method, req->_path, req->_scheme);
+                            rep->_body = "handle /\n";
+                            done->set_value();
+                            return make_ready_future<std::tuple<lw_shared_ptr<h2::request>, std::unique_ptr<h2::response>>>(
+                                                        std::make_tuple(std::move(req), std::move(rep)));
+                        });
+                        when_all(server->do_accepts(1), done->get_future()).get();
+                    }
                 });
                 return when_all(std::move(client), std::move(writer));
             }).discard_result().then_wrapped([&server] (auto f) {
@@ -558,6 +628,13 @@ SEASTAR_TEST_CASE(test_message_with_error_non_empty_body) {
         std::make_tuple(true, 100),
         std::make_tuple(false, 10000)};
     return test_client_server::run(tests);
+}
+
+SEASTAR_TEST_CASE(http2_test_message_with_error_non_empty_body) {
+    std::vector<std::tuple<bool, size_t>> tests = {
+        std::make_tuple(true, 100),
+        std::make_tuple(false, 10000)};
+    return test_client_server::run(tests, true);
 }
 
 SEASTAR_TEST_CASE(test_simple_chunked) {
