@@ -397,7 +397,7 @@ public:
         });
     }
 
-    future<> listen(ipv4_addr addr, bool with_tls) {
+    future<> listen(ipv4_addr addr, bool with_tls = false) {
         return _server_dist->invoke_on_all(&http_server::listen, addr, with_tls);
     }
 
