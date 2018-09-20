@@ -388,17 +388,26 @@ static auto dump_buffer(const sstring &buffer) {
     std::cout << "\n";
 }
 
-struct http2_utils {
-    static sstring prepare_http2_request(h2::request &req) {
-        nghttp2_session *session;
+struct http2_consumer {
+    http2_consumer() {
         nghttp2_session_callbacks *callbacks;
         auto rv = nghttp2_session_callbacks_new(&callbacks);
         assert(rv == 0);
         nghttp2_session_callbacks_set_on_frame_send_callback(callbacks, [](auto, auto, auto) { return 0; });
-        rv = nghttp2_session_client_new(&session, callbacks, nullptr);
+        nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks,
+            [](auto, auto, auto, const uint8_t *data, size_t len, void *ud) {
+                auto htp2 = static_cast<http2_consumer*>(ud);
+                htp2->response = sstring(reinterpret_cast<const char*>(data), len);
+                std::cout << htp2->response << "\n";
+                return 0;
+            });
+        rv = nghttp2_session_client_new(&session, callbacks, this);
         nghttp2_session_callbacks_del(callbacks);
         assert (rv == 0 && session);
-        rv = nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, nullptr, 0);
+    }
+
+    sstring prepare_http2_request(h2::request &req) {
+        auto rv = nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, nullptr, 0);
         assert(rv == 0);
         req.done();
         auto stream_id = nghttp2_submit_request(session, nullptr, req.data(), req.size(), nullptr, nullptr);
@@ -421,6 +430,16 @@ struct http2_utils {
         assert(size == 81);
         return raw_frames;
     }
+
+    bool read_http2(const temporary_buffer<char>& b) {
+        auto data = reinterpret_cast<const uint8_t *>(b.get());
+        auto rv = nghttp2_session_mem_recv(session, data, b.size());
+        return (rv >= 0);
+    }
+
+    nghttp2_session *session;
+    sstring response;
+    constexpr static auto expected_rep {"handled test\n"};
 };
 
 class test_client_server {
@@ -431,11 +450,11 @@ public:
         });
     }
 
-    static future<> write_http2_request(output_stream<char>& output) {
+    static future<> write_http2_request(output_stream<char>& output, http2_consumer *htp2) {
         auto req = h2::request({{":method", "GET"}, {":path", "/test"}, {":scheme", "https"},
                                              {":authority", "myhost.org"}, {"accept", "*/*"},
                                              {"user-agent", "nghttp2/" NGHTTP2_VERSION} });
-        return output.write(http2_utils::prepare_http2_request(req)).then([&output]{
+        return output.write(htp2->prepare_http2_request(req)).then([&output]{
             return output.flush();
         });
     }
@@ -518,26 +537,37 @@ public:
                     size_t count = 0;
                     while (more) {
                         http_consumer htp;
+                        http2_consumer *htp2;
                         if (!http2) {
                             write_request(output).get();
                         } else {
-                            write_http2_request(output).get();
+                            htp2 = new http2_consumer;
+                            write_http2_request(output, htp2).get();
                         }
-                        repeat([&c_socket, &input, &htp] {
-                            return input.read().then([&c_socket, &input, &htp](const temporary_buffer<char>& b) mutable {
-                                return (b.size() == 0 || htp.read(b)) ? make_ready_future<stop_iteration>(stop_iteration::yes) :
+                        repeat([&c_socket, &input, &htp, http2, htp2] {
+                            return input.read().then([&c_socket, &input, &htp, http2, htp2](const temporary_buffer<char>& b) mutable {
+                                return (b.size() == 0 || htp.read(b) || (http2 && htp2->read_http2(b))) ? make_ready_future<stop_iteration>(stop_iteration::yes) :
                                         make_ready_future<stop_iteration>(stop_iteration::no);
                             });
                         }).get();
                         if (std::get<bool>(tests[count])) {
-                            BOOST_REQUIRE_EQUAL(htp._body.length(), std::get<size_t>(tests[count]));
+                            if (!http2) {
+                                BOOST_REQUIRE_EQUAL(htp._body.length(), std::get<size_t>(tests[count]));
+                            } else {
+                                BOOST_REQUIRE_EQUAL(htp2->response, http2_consumer::expected_rep);
+                            }
                         } else {
-                            BOOST_REQUIRE_EQUAL(input.eof(), true);
+                            if (!http2) {
+                                BOOST_REQUIRE_EQUAL(input.eof(), true);
+                            }
                             more = false;
                         }
                         count++;
                         if (count == tests.size()) {
                             more = false;
+                        }
+                        if (http2 && !more) {
+                            delete htp2;
                         }
                     }
                     if (input.eof()) {
@@ -575,7 +605,7 @@ public:
                         promise<> *done = new promise<>();
                         server->_routes_http2.add(h2::method::GET, "/test", [done](auto req, auto rep){
                             fmt::print("method: {}\npath: {}\nscheme: {}\n", req->_method, req->_path, req->_scheme);
-                            rep->_body = "handle /\n";
+                            rep->_body = http2_consumer::expected_rep;
                             done->set_value();
                             return make_ready_future<std::tuple<lw_shared_ptr<h2::request>, std::unique_ptr<h2::response>>>(
                                                         std::make_tuple(std::move(req), std::move(rep)));
