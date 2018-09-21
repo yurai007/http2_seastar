@@ -220,6 +220,15 @@ public:
 
 class http_server_tester;
 
+static sstring http_date() {
+    auto t = ::time(nullptr);
+    struct tm tm;
+    gmtime_r(&t, &tm);
+    char tmp[100];
+    strftime(tmp, sizeof(tmp), "%d %b %Y %H:%M:%S GMT", &tm);
+    return tmp;
+}
+
 class http_server {
     std::vector<server_socket> _listeners;
     http_stats _stats;
@@ -299,6 +308,7 @@ public:
                 conn = new connection(*this, std::move(socket_), std::move(address_));
             } else {
                 try {
+                    _routes_http2._date = &_date;
                     conn = new seastar::httpd2::http2_connection<>(&_routes_http2, std::move(socket_), std::move(address_));
                 } catch (std::exception &ex) {
                     std::cerr << "http2 connection error " << ex.what() << std::endl;

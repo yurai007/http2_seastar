@@ -57,15 +57,6 @@ public:
     virtual ~session() = default;
 };
 }
-
-static sstring http_date() {
-    auto t = ::time(nullptr);
-    struct tm tm;
-    gmtime_r(&t, &tm);
-    char tmp[100];
-    strftime(tmp, sizeof(tmp), "%d %b %Y %H:%M:%S GMT", &tm);
-    return tmp;
-}
 }
 
 namespace seastar {
@@ -98,6 +89,7 @@ private:
     sstring _push_path;
 public:
     dhandler *_directory_handler {nullptr};
+    sstring *_date {nullptr};
 public:
     client_callback _client_handler;
 };
