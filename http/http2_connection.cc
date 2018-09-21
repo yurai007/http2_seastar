@@ -70,9 +70,11 @@ void http2_stream::commit_response(bool promised) {
     if (!promised) {
         _rep->flush_body();
         _rep->clear();
-        _rep->add_headers({{":status", std::to_string(_rep->_status_code)},
-                           {"date", http_date()},
-                           {"content-length", std::to_string(static_cast<int>(_rep->_body.size()))}});
+        sstring status = (_rep->_status_code == 200)? "200" : to_sstring(_rep->_status_code);
+        sstring length = to_sstring(static_cast<int>(_rep->_body.size()));
+        _rep->add_headers({{":status", status},
+                           {"date", *_routes->_date},
+                           {"content-length", length}});
     } else {
         _rep->clear();
     }
