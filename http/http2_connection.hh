@@ -151,6 +151,7 @@ private:
     nghttp2_session *_session {nullptr};
     bool _done {false};
     std::unordered_map<int32_t, std::unique_ptr<http2_stream>> _streams;
+    std::pair<int32_t, http2_stream*> last_active_stream {-1, nullptr};
     connected_socket _fd;
     input_stream<char> _read_buf;
     output_stream<char> _write_buf;
