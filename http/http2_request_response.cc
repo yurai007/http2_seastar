@@ -29,14 +29,19 @@ namespace httpd2 {
 request::request(std::initializer_list<std::pair<sstring, sstring> > headers)
     : headers_utils(headers)  {}
 
+template<size_t size>
+static inline bool fast_compare(const sstring& that, const char *x) {
+    return that.size() == size && std::equal(that.begin(), that.end(), x);
+}
+
 void request::add_header(const request_feed &feed) {
     const sstring header(reinterpret_cast<const char*>(std::get<0>(feed)));
     const sstring content(reinterpret_cast<const char*>(std::get<2>(feed)));
-    if (header == ":method") {
+    if (fast_compare<sizeof(":method") - 1>(header, ":method")) {
         _method = std::move(content);
-    } else if (header == ":path") {
+    } else if (fast_compare<sizeof(":path") - 1>(header, ":path")) {
          _path = std::move(content);
-    } else if (header == ":scheme") {
+    } else if (fast_compare<sizeof(":scheme") - 1>(header, ":scheme")) {
          _scheme = std::move(content);
     }
 }

@@ -577,9 +577,13 @@ void http2_connection<session_type>::close_stream(const int32_t stream_id) {
 
 template<session_t session_type>
 http2_stream *http2_connection<session_type>::find_stream(const int32_t stream_id) {
+    if (last_active_stream.first == stream_id)
+        return last_active_stream.second;
     auto it = _streams.find(stream_id);
     if (it == _streams.end())
         return nullptr;
+    last_active_stream.first = it->first;
+    last_active_stream.second = it->second.get();
     return (*it).second.get();
 }
 
