@@ -115,11 +115,11 @@ state=1
 ```sh
 ./build/release/apps/httpd/httpd --node=server --tls=false --debug=false --port=3000 -c 1  
 ./build/release/apps/httpd/httpd --node=client --tls=false --con=500 --req=4000 -c 1  
-WARN  2018-07-21 10:50:01,324 [shard 0] seastar - Unable to set SCHED_FIFO scheduling policy for timer thread; latency impact   possible. Try adding CAP_SYS_NICE  
-established tcp connections  
-Total responses: 2000000  
-Req/s: **224330**  
-Avg resp time: 4.45772 us  
+WARN  2018-09-24 15:53:31,968 [shard 0] seastar - Unable to set SCHED_FIFO scheduling policy for timer thread; latency impact possible. Try adding CAP_SYS_NICE
+established tcp connections
+Total responses: 2000000
+Req/s: **263739**
+Avg resp time: 3.79162 us
 ```
 **Legacy HTTP/1.1 server**  
 ```sh
@@ -137,7 +137,19 @@ Total time: 10.003952
 Requests/sec: **62435.024867**  
 ==========     done     ============  
 ```
-Results are very promising - in this syntactic benchmark HTTP/2 server achieve more then 3x throughput then legacy HTTP/1.1 implementation. More details will be provided soon.
+Results are very promising - in those syntactic benchmarks HTTP/2 server achieve almost 400% of legacy HTTP/1.1 implementation throughput. More details will be provided soon.
+### Performance tests executed per 2 shards on one machine
+```sh
+./build/release/apps/httpd/httpd --node=server --tls=false --debug=false --port=3000 -c 2
+./build/release/apps/httpd/httpd --node=client --tls=false --con=500 --req=10000 -c 2
+WARN  2018-09-24 15:58:41,125 [shard 0] seastar - Unable to set SCHED_FIFO scheduling policy for timer thread; latency impact possible. Try adding CAP_SYS_NICE
+established tcp connections
+established tcp connections
+Total responses: 10000000
+Req/s: **422908**
+Avg resp time: 2.36458 us
+```
+Number of shards and throughput increased 2 times which can suggest linear scalability and makes me happy.
 ### Performance tests executed with all shard on 2 hosts
 
 TODO
