@@ -41,7 +41,7 @@ class http_client {
 public:
     future<> connect(const uint16_t connections, ipv4_addr server_addr, bool with_tls) {
         if (!with_tls) {
-            for (auto i = connections; i > 0u; i--) {
+            for (auto _ = connections; _ > 0u; _--) {
                 engine().net().connect(make_ipv4_address(server_addr))
                         .then([this] (connected_socket fd) {
                     _sockets.push_back(std::move(fd));
@@ -55,7 +55,7 @@ public:
             return builder->set_x509_trust_file(hardcoded_pem, tls::x509_crt_format::PEM)
                         .then([this, connections, builder, server_addr = std::move(server_addr)]() {
                             auto creds = builder->build_certificate_credentials();
-                                for (auto i = connections; i > 0u; i--) {
+                                for (auto _ = connections; _ > 0u; _--) {
                                     tls::connect(creds, server_addr)
                                         .then([this] (connected_socket fd) {
                                             _sockets.push_back(std::move(fd));
@@ -68,7 +68,7 @@ public:
     }
 
     future<> send_burst(unsigned requests, lw_shared_ptr<request> req, http2_connection<session_t::client> *conn) {
-        for (auto i = requests; i > 0; i--) {
+        for (auto _ = requests; _ > 0; _--) {
             auto rv = conn->submit_request(req);
             if (rv < 0) {
                 _failed_requests++;
@@ -84,7 +84,7 @@ public:
         _common_reqs = make_lw_shared<request>(*req);
         _common_reqs->done();
         for (auto &&socket : _sockets) {
-            auto conn = new http2_connection<session_t::client>(&_routes, std::move(socket), std::move(make_ipv4_address(server_addr)));
+            auto conn = new http2_connection<session_t::client>(_routes, std::move(socket), std::move(make_ipv4_address(server_addr)));
             send_burst(reqs, _common_reqs, conn)
                     .then_wrapped([this, conn] (auto&& f) {
                         _conn_finished.signal();

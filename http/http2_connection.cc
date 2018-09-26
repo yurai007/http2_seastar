@@ -24,20 +24,11 @@
 namespace seastar {
 namespace httpd2 {
 
-http2_stream::http2_stream(const int32_t id, routes *routes_)
-    : _id(id), _req(make_lw_shared<request>()), _routes(routes_)
-{}
-
-http2_stream::http2_stream(const int32_t id, lw_shared_ptr<request> req)
-    : _id(id), _req(req) {
-    assert(_req);
-}
-
 future<> http2_stream::eat_request(bool promised_stream) {
-    auto user_handler = (!promised_stream)? _routes->handle(_req->_path) : _routes->handle_push();
+    auto user_handler = (!promised_stream)? _routes.handle(_req->_path) : _routes.handle_push();
     if (!user_handler) {
         _rep = std::make_unique<response>();
-        auto user_file_handler = _routes->_directory_handler;
+        auto user_file_handler = _routes._directory_handler;
         assert(user_file_handler);
         return user_file_handler->handle(_req, std::move(_rep))
                 .then([this](auto rep){
@@ -50,30 +41,20 @@ future<> http2_stream::eat_request(bool promised_stream) {
         return user_handler(std::move(_req), std::move(_rep))
                 .then([this](auto req_rep){
             std::tie(_req, _rep) = std::move(req_rep);
-            assert(_rep);
+            assert(_req && _rep);
             return make_ready_future<>();
         });
     }
 }
 
-bool http2_stream::push() const {
-    assert(_req);
-    return (_req->_path == _routes->get_push_path());
-}
-
-void http2_stream::update_request(request_feed &data) {
-    _req->add_header(data);
-}
-
 void http2_stream::commit_response(bool promised) {
-    assert(_rep);
     if (!promised) {
         _rep->flush_body();
         _rep->clear();
         sstring status = (_rep->_status_code == 200)? "200" : to_sstring(_rep->_status_code);
         sstring length = to_sstring(static_cast<int>(_rep->_body.size()));
         _rep->add_headers({{":status", status},
-                           {"date", *_routes->_date},
+                           {"date", *_routes._date},
                            {"content-length", length}});
     } else {
         _rep->clear();
@@ -81,21 +62,11 @@ void http2_stream::commit_response(bool promised) {
     _rep->done();
 }
 
-void http2_stream::move_push_rep() {
-    _promised_rep = std::move(_rep);
-    _rep = std::make_unique<response>();
-}
-
-response &http2_stream::get_response() {
-    return *_rep;
-}
-
 template<session_t session_type>
-http2_connection<session_type>::http2_connection(routes *routes_, connected_socket&& fd, socket_address addr)
+http2_connection<session_type>::http2_connection(routes &routes_, connected_socket&& fd, socket_address addr)
     : _fd(std::move(fd)), _read_buf(_fd.input()), _write_buf(_fd.output()), _routes(routes_) {
-    assert(_routes);
     if constexpr (session_type == session_t::client) {
-        assert(_routes->_client_handler);
+        assert(_routes._client_handler);
     }
     if (debug_on) {
         fmt::print("new session: {}\n", addr);
@@ -212,7 +183,7 @@ template<session_t session_type>
 void http2_connection<session_type>::eat_server_rep(data_chunk_feed data) {
     const auto *ptr = reinterpret_cast<const char*>(std::get<0>(data));
     const sstring response(ptr, std::get<1>(data));
-    _routes->_client_handler(response);
+    _routes._client_handler(response);
 }
 
 void dump_buffer(temporary_buffer<char> buffer, const char *direction) {
@@ -339,7 +310,7 @@ template<session_t session_type>
 int http2_connection<session_type>::submit_response(http2_stream &stream) {
     auto &response = stream.get_response();
     return nghttp2_submit_response(_session, stream.get_id(), response.data(),
-                                   response.size(), &response._prd);
+                                   response.size(), response.get_provider());
 }
 
 template<session_t session_type>
@@ -500,7 +471,7 @@ int http2_connection<session_type>::consume_frame(nghttp2_internal_data && data)
             }
             // now normal flow for stream 1 - commit response
             stream->eat_request().then([stream, this](){
-                if (stream->push()) {
+                if (stream->pushable()) {
                     // 1. stream 1 has req and some rep was deliverd by callback
                     // 2. simulate push reponse and get stream 2
                     stream->commit_response(true);
@@ -508,7 +479,7 @@ int http2_connection<session_type>::consume_frame(nghttp2_internal_data && data)
                     if (id < 0) {
                         throw nghttp2_exception("submit_push_promise", id);
                     }
-                    stream->move_push_rep();
+                    stream->migrate_to_promise();
                     create_stream(id);
                     auto promised_strm = find_stream(id);
                     assert(promised_strm != nullptr);
@@ -557,7 +528,7 @@ int http2_connection<session_type>::consume_frame(nghttp2_internal_data && data)
 
 template<session_t session_type>
 void http2_connection<session_type>::create_stream(const int32_t stream_id, lw_shared_ptr<request> req) {
-    _streams.emplace(stream_id, std::make_unique<http2_stream>(stream_id, req));
+    _streams.emplace(stream_id, std::make_unique<http2_stream>(stream_id, req, _routes));
 }
 
 template<session_t session_type>

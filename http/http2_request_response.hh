@@ -113,9 +113,9 @@ public:
 };
 
 class response : public headers_utils {
+    nghttp2_data_provider _prd;
 public:
     uint32_t _status_code {200u};
-    nghttp2_data_provider _prd;
     sstring _body;
 
     void add_headers(std::initializer_list<std::pair<sstring, sstring> > headers);
@@ -133,6 +133,9 @@ public:
         _status_code = code;
     }
 
+    const nghttp2_data_provider *get_provider() const {
+        return &_prd;
+    }
 private:
     const char *_body_head {nullptr};
 

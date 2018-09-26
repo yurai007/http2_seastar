@@ -122,7 +122,7 @@ void set_handler(h2::http_client& client) {
 future<> server(bpo::variables_map config) {
     uint16_t port = config["port"].as<uint16_t>();
     auto with_tls = config["tls"].as<bool>();
-    auto server = new http_server_control;
+    auto server = make_lw_shared<http_server_control>();
     auto rb = make_shared<api_registry_builder>("apps/httpd/");
     return server->start().then([server] {
         return server->set_routes(set_routes);

@@ -97,22 +97,36 @@ public:
 class http2_stream {
 public:
     http2_stream() = default;
-    http2_stream(const int32_t id, routes *routes_);
-    http2_stream(const int32_t id, lw_shared_ptr<request> req);
+    http2_stream(const int32_t id, routes &routes_)
+        : _id(id), _req(make_lw_shared<request>()), _routes(routes_) {}
+
+    http2_stream(const int32_t id, lw_shared_ptr<request> req, routes &routes_)
+        : _id(id), _req(req), _routes(routes_) {
+        assert(_req);
+    }
     int32_t get_id() const {
         return _id;
     }
     future<> eat_request(bool promised_stream = false);
-    bool push() const;
-    void update_request(request_feed &data);
+    bool pushable() const {
+        return _req->_path == _routes.get_push_path();
+    }
+    void update_request(request_feed &data) {
+        _req->add_header(data);
+    }
     void commit_response(bool promised = false);
-    void move_push_rep();
-    response &get_response();
+    void migrate_to_promise() {
+        _promised_rep = std::move(_rep);
+        _rep = std::make_unique<response>();
+    }
+    const response &get_response() const {
+        return *_rep;
+    }
 private:
     int32_t _id {0};
     lw_shared_ptr<request> _req;
     std::unique_ptr<response> _rep, _promised_rep;
-    routes *_routes {nullptr};
+    routes &_routes;
 };
 
 enum class session_t {client, server};
@@ -131,8 +145,7 @@ namespace legacy = seastar::httpd;
 template<session_t session_type = session_t::server>
 class http2_connection final : public legacy::session {
 public:
-    explicit http2_connection(routes* routes_, connected_socket&& fd,
-                     socket_address addr = socket_address());
+    explicit http2_connection(routes &routes_, connected_socket&& fd, socket_address addr = socket_address());
     future<> process() override;
     void shutdown() override;
     output_stream<char>& out() override;
@@ -155,7 +168,7 @@ private:
     connected_socket _fd;
     input_stream<char> _read_buf;
     output_stream<char> _write_buf;
-    routes *_routes {nullptr};
+    routes &_routes;
     constexpr static auto _streams_limit = 100u;
     std::vector<lw_shared_ptr<request>> _remaining_reqs;
     bool _start_with_reading;
