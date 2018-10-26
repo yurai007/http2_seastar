@@ -17,7 +17,8 @@
 #include "core/thread.hh"
 #include "util/noncopyable_function.hh"
 #include "http/json_path.hh"
-#include "http/http2_request_response.hh"
+//#include "http/http2_request_response.hh"
+#include "http2_test_env.hh"
 #include <sstream>
 
 using namespace seastar;
@@ -379,80 +380,6 @@ struct http_consumer {
     }
 };
 
-namespace h2 = seastar::httpd2;
-
-struct http2_env {
-    http2_env() {
-        nghttp2_session_callbacks *callbacks;
-        auto rv = nghttp2_session_callbacks_new(&callbacks);
-        assert(rv == 0);
-        nghttp2_session_callbacks_set_on_frame_send_callback(callbacks, [](auto, auto, auto) { return 0; });
-        nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks,
-            [](auto, auto, auto, const uint8_t *data, size_t len, void *ud) {
-                auto env = static_cast<http2_env*>(ud);
-                env->response = sstring(reinterpret_cast<const char*>(data), len);
-                std::cout << env->response << "\n";
-                return 0;
-            });
-        rv = nghttp2_session_client_new(&session, callbacks, this);
-        nghttp2_session_callbacks_del(callbacks);
-        assert (rv == 0 && session);
-    }
-
-    sstring prepare_http2_request(h2::request &req) {
-        auto rv = nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, nullptr, 0);
-        assert(rv == 0);
-        req.done();
-        auto stream_id = nghttp2_submit_request(session, nullptr, req.data(), req.size(), nullptr, nullptr);
-        assert(stream_id >= 0);
-        auto size = 0u;
-        sstring raw_frames;
-        for (;;) {
-            const uint8_t *data = nullptr;
-            auto bytes = nghttp2_session_mem_send(session, &data);
-            assert(bytes >= 0);
-            sstring raw_frame {reinterpret_cast<const char*>(data), static_cast<size_t>(bytes)};
-            if (bytes == 0) {
-                break;
-            } else {
-                dump_buffer(raw_frame);
-            }
-            size += bytes;
-            raw_frames += raw_frame;
-        }
-        assert(size == 81);
-        return raw_frames;
-    }
-
-    bool read_http2(const temporary_buffer<char>& b) {
-        auto data = reinterpret_cast<const uint8_t *>(b.get());
-        auto rv = nghttp2_session_mem_recv(session, data, b.size());
-        return (rv >= 0);
-    }
-
-    void set_expected_response_body(const sstring &body) {
-        expected_rep_body = body;
-    }
-
-    void set_handler(auto &server, h2::user_callback callback_) {
-        callback = callback_;
-        server->_routes_http2.add(h2::method::GET, "/test", callback);
-    }
-
-    static void dump_buffer(const sstring &buffer) {
-        std::cout <<  buffer.size() << " B:     ";
-        for (auto i = 0u; i < buffer.size(); i++)
-            std::cout << (unsigned char)(buffer[i]);
-        std::cout << "\n";
-    }
-
-    promise<> done;
-    h2::user_callback callback;
-    nghttp2_session *session;
-    sstring response;
-    sstring expected_rep_body;
-};
-
 class test_client_server {
 public:
     static future<> write_request(output_stream<char>& output) {
@@ -461,10 +388,12 @@ public:
         });
     }
 
-    static void prepare_http2_env(http2_env *env, auto &server) {
+    static void prepare_http2_test_env(http2_test_env *env, auto &server) {
         env->set_expected_response_body("handled test\n");
         env->set_handler(server, [env](auto req, auto rep){
-            fmt::print("method: {}\npath: {}\nscheme: {}\n", req->_method, req->_path, req->_scheme);
+            BOOST_REQUIRE_EQUAL(req->_method, "GET");
+            BOOST_REQUIRE_EQUAL(req->_path, "/test");
+            BOOST_REQUIRE_EQUAL(req->_scheme, "https");
             assert(env != nullptr);
             assert(!env->expected_rep_body.empty());
             rep->_body = env->expected_rep_body;
@@ -474,10 +403,11 @@ public:
         });
     }
 
-    static future<> write_http2_request(output_stream<char>& output, http2_env *env) {
+    static future<> write_http2_request(output_stream<char>& output, http2_test_env *env) {
         auto req = h2::request({{":method", "GET"}, {":path", "/test"}, {":scheme", "https"},
                                              {":authority", "myhost.org"}, {"accept", "*/*"},
                                              {"user-agent", "nghttp2/" NGHTTP2_VERSION} });
+        env->expect_get_request_frames_flow();
         return output.write(env->prepare_http2_request(req)).then([&output]{
             return output.flush();
         });
@@ -552,8 +482,8 @@ public:
             return do_with(loopback_socket_impl(lcf), [&server, &lcf, tests, http2](loopback_socket_impl& lsi) {
                 httpd::http_server_tester::listeners(*server).emplace_back(lcf.get_server_socket());
                 httpd::http_server_tester::listeners(*server).emplace_back(lcf.get_server_socket());
-                http2_env *env = new http2_env;
-                prepare_http2_env(env, server);
+                http2_test_env *env = new http2_test_env;
+                prepare_http2_test_env(env, server);
 
                 auto client = seastar::async([&lsi, tests, http2, &env, &server] {
                     connected_socket c_socket = std::get<connected_socket>(lsi.connect(socket_address(ipv4_addr()), socket_address(ipv4_addr())).get());
@@ -583,6 +513,7 @@ public:
                                 std::cout << env->response.size() << " " << env->response << "\n";
                                 std::cout <<  env->expected_rep_body.size() << " " <<  env->expected_rep_body << "\n";
                                 BOOST_REQUIRE_EQUAL(env->response, env->expected_rep_body);
+                                BOOST_CHECK(env->frames_fulfilled);
                             }
                         } else {
                             if (!http2) {
